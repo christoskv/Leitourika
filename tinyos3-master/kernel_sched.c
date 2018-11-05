@@ -1,4 +1,3 @@
-
 #include <assert.h>
 #include <sys/mman.h>
 
@@ -15,10 +14,8 @@
 /*
    The thread layout.
   --------------------
-
   On the x86 (Pentium) architecture, the stack grows upward. Therefore, we
   can allocate the TCB at the top of the memory block used as the stack.
-
   +-------------+
   |   TCB       |
   +-------------+
@@ -30,11 +27,9 @@
   +-------------+
   | first frame |
   +-------------+
-
   Advantages: (a) unified memory area for stack and TCB (b) stack overrun will
   crash own thread, before it affects other threads (which may make debugging
   easier).
-
   Disadvantages: The stack cannot grow unless we move the whole TCB. Of course,
   we do not support stack growth anyway!
  */
@@ -54,6 +49,8 @@ Mutex active_threads_spinlock = MUTEX_INIT;
 #define THREAD_TCB_SIZE   (((sizeof(TCB)+SYSTEM_PAGE_SIZE-1)/SYSTEM_PAGE_SIZE)*SYSTEM_PAGE_SIZE)
 
 #define THREAD_SIZE  (THREAD_TCB_SIZE+THREAD_STACK_SIZE)
+
+#define NUMBER_OF_QUEUES 2 /*----------------index-of-schedule.------ */
 
 //#define MMAPPED_THREAD_MEM 
 #ifdef MMAPPED_THREAD_MEM 
@@ -195,12 +192,12 @@ CCB cctx[MAX_CORES];
 	
   Also, the scheduler contains a linked list of all the sleeping
   threads with a timeout.
-
   Both of these structures are protected by @c sched_spinlock.
 */
 
 
-rlnode SCHED;                         /* The scheduler queue */
+/* rlnode SCHED;                         /* The scheduler queue */
+rlnode SCHED[NUMBER_OF_QUEUES]
 rlnode TIMEOUT_LIST;				  /* The list of threads with a timeout */
 Mutex sched_spinlock = MUTEX_INIT;    /* spinlock for scheduler queue */
 
@@ -221,7 +218,6 @@ void ici_handler()
 
 /*
   Possibly add TCB to the scheduler timeout list.
-
   *** MUST BE CALLED WITH sched_spinlock HELD ***
 */
 static void sched_register_timeout(TCB* tcb, TimerDuration timeout)
@@ -245,13 +241,12 @@ static void sched_register_timeout(TCB* tcb, TimerDuration timeout)
 
 /*
   Add TCB to the end of the scheduler list.
-
   *** MUST BE CALLED WITH sched_spinlock HELD ***
 */
 static void sched_queue_add(TCB* tcb)
 {
   /* Insert at the end of the scheduling list */
-  rlist_push_back(& SCHED, & tcb->sched_node);
+  rlist_push_back(& SCHED[0], & tcb->sched_node);
 
   /* Restart possibly halted cores */
   cpu_core_restart_one();
@@ -260,7 +255,6 @@ static void sched_queue_add(TCB* tcb)
 
 /*
 	Adjust the state of a thread to make it READY.
-
     *** MUST BE CALLED WITH sched_spinlock HELD ***	
  */
 static void sched_make_ready(TCB* tcb)
@@ -287,7 +281,6 @@ static void sched_make_ready(TCB* tcb)
 /*
   Remove the head of the scheduler list, if any, and
   return it. Return NULL if the list is empty.
-
   *** MUST BE CALLED WITH sched_spinlock HELD ***
 */
 static TCB* sched_queue_select()
@@ -302,10 +295,23 @@ static TCB* sched_queue_select()
   		sched_make_ready(tcb);
   }
 
-  /* Get the head of the SCHED list */
-  rlnode * sel = rlist_pop_front(& SCHED);
+/*--------maybe i need to init rlnode to null---------*/
+rlnode * sel = NULL 
 
-  return sel->tcb;  /* When the list is empty, this is NULL */
+  /* Get the head of the SCHED list */
+ // rlnode * sel = rlist_pop_front(& SCHED); 
+/*-----------------------------------------------------------------*/
+  for (int i = 0 ; i <= NUMBER_OF_QUEUES-1 ; i++)
+  {	
+    if(! is_rlist_empty(& SCHED[i]) )
+    {
+	       sel = rlist_pop_front(& SCHED[i]);
+	       return sel->tcb;	
+    }
+  }
+/*-----------------------------------------------------------------*/
+
+  return NULL;  /* When the list is empty, this is NULL */
 } 
 
 
@@ -442,7 +448,6 @@ void yield(enum SCHED_CAUSE cause)
   This is done mostly from inside yield(). 
   However, for threads that are executed for the first time, this 
   has to happen in thread_start.
-
   The 'preempt' argument determines whether preemption is turned on
   in the new timeslice. When returning to threads in the non-preemptive
   domain (e.g., waiting at some driver), we need to not turn preemption
@@ -509,8 +514,11 @@ static void idle_thread()
   Initialize the scheduler queue
  */
 void initialize_scheduler()
-{
-  rlnode_init(&SCHED, NULL);
+{ 
+ for(int i = 0 ; i <= NUM_OF_QUEUES-1 ; i++)
+  {
+    rlnode_init(&SCHED[i],NULL);
+  }
   rlnode_init(&TIMEOUT_LIST, NULL);
 }
 
@@ -545,5 +553,3 @@ void run_scheduler()
   cpu_interrupt_handler(ALARM, NULL);
   cpu_interrupt_handler(ICI, NULL);
 }
-
-
