@@ -1,3 +1,4 @@
+
 #include <assert.h>
 #include <sys/mman.h>
 
@@ -50,7 +51,7 @@ Mutex active_threads_spinlock = MUTEX_INIT;
 
 #define THREAD_SIZE  (THREAD_TCB_SIZE+THREAD_STACK_SIZE)
 
-#define NUMBER_OF_QUEUES 2 /*----------------index-of-schedule.------ */
+#define NUMBER_OF_QUEUES 3 /*----------------index-of-schedule.------ */
 
 //#define MMAPPED_THREAD_MEM 
 #ifdef MMAPPED_THREAD_MEM 
@@ -125,6 +126,9 @@ TCB* spawn_thread(PCB* pcb, void (*func)())
   tcb->owner_pcb = pcb;
 
   /* Initialize the other attributes */
+
+  tcb->priority = 0; /*high priority initialization */
+
   tcb->type = NORMAL_THREAD;
   tcb->state = INIT;
   tcb->phase = CTX_CLEAN;
@@ -246,7 +250,7 @@ static void sched_register_timeout(TCB* tcb, TimerDuration timeout)
 static void sched_queue_add(TCB* tcb)
 {
   /* Insert at the end of the scheduling list */
-  rlist_push_back(& SCHED[0], & tcb->sched_node);
+  rlist_push_back(& SCHED[tcb->priority], & tcb->sched_node);
 
   /* Restart possibly halted cores */
   cpu_core_restart_one();
@@ -284,8 +288,9 @@ static void sched_make_ready(TCB* tcb)
   *** MUST BE CALLED WITH sched_spinlock HELD ***
 */
 static TCB* sched_queue_select()
-{
-
+{ //works, but I need an algorithm for threads that don't take time due to priority ---------------------------
+	// solutions: boost solutions or starvation problem or resources lockouts -------------------------
+ 
   /* Empty the timeout list up to the current time and wake up each thread */
   TimerDuration curtime = bios_clock();
   while(! is_rlist_empty(&TIMEOUT_LIST)) {
@@ -384,7 +389,7 @@ void sleep_releasing(Thread_state state, Mutex* mx, enum SCHED_CAUSE cause, Time
 /* This function is the entry point to the scheduler's context switching */
 
 void yield(enum SCHED_CAUSE cause)
-{ 
+{ //-------------------------------------priorities cause, if cause occure-----------------------------
   /* Reset the timer, so that we are not interrupted by ALARM */
   bios_cancel_timer();
 
@@ -455,7 +460,7 @@ void yield(enum SCHED_CAUSE cause)
 */
 
 void gain(int preempt)
-{
+{ //here i need an algorithm giving diff. quantum to priorities---------------------------------------------------------------
   Mutex_Lock(& sched_spinlock);
 
   /* Mark current state */
@@ -529,10 +534,10 @@ void run_scheduler()
   CCB * curcore = & CURCORE;
 
   /* Initialize current CCB */
+  curcore->idle_thread.priority = 0; //high priority initialization
+
   curcore->id = cpu_core_id;
-
   curcore->current_thread = & curcore->idle_thread;
-
   curcore->idle_thread.owner_pcb = get_pcb(0);
   curcore->idle_thread.type = IDLE_THREAD;
   curcore->idle_thread.state = RUNNING;
